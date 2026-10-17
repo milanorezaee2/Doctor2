@@ -1,8 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Phone, ShieldCheck, Star, Sparkles, ArrowLeft,
-  Zap, Activity, Brain, Heart, Images
+  Zap, Activity, Brain, Heart, Images,
+  ChevronLeft, ChevronRight, Play, Pause
 } from 'lucide-react';
+
+/** مدت مکث روی هر تصویر پیش‌نمایش (میلی‌ثانیه) */
+const PREVIEW_INTERVAL = 5000;
 
 /* ─── Images ───────────────────────────────────────── */
 const IMG_DOCTOR = `${import.meta.env.BASE_URL}images/doctor-hashtroodi.jpg`;
@@ -77,6 +81,34 @@ export default function Hero() {
   const [activeHeroSlide, setActiveHeroSlide] = useState(0);
   const selectedPhoto = previewPhotos[activePreview];
 
+  /* ── Autoplay state for the gallery preview frame ── */
+  const [isManuallyPaused, setIsManuallyPaused] = useState(false);
+  const [isHoverPaused, setIsHoverPaused] = useState(false);
+  const [isFocusPaused, setIsFocusPaused] = useState(false);
+  const [isInView, setIsInView] = useState(true);
+  const [isPageVisible, setIsPageVisible] = useState(true);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const touchStartXRef = useRef<number | null>(null);
+  const remainingRef = useRef(PREVIEW_INTERVAL);
+  const startedAtRef = useRef<number | null>(null);
+
+  const isAutoplayPaused =
+    isManuallyPaused || isHoverPaused || isFocusPaused || !isInView || !isPageVisible || prefersReducedMotion;
+
+  const goToPreview = useCallback(
+    (index: number) => {
+      const total = previewPhotos.length;
+      const target = ((index % total) + total) % total;
+      if (target === activePreview) return;
+      remainingRef.current = PREVIEW_INTERVAL;
+      startedAtRef.current = null;
+      setActivePreview(target);
+    },
+    [activePreview]
+  );
+
+  /* Background cinematic slideshow */
   useEffect(() => {
     const slideTimer = window.setInterval(() => {
       setActiveHeroSlide((current) => (current + 1) % heroBackgroundPhotos.length);
@@ -84,6 +116,62 @@ export default function Hero() {
 
     return () => window.clearInterval(slideTimer);
   }, []);
+
+  /* Respect the user's reduced-motion preference: no autoplay */
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setPrefersReducedMotion(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+
+  /* Pause while the browser tab is hidden */
+  useEffect(() => {
+    const update = () => setIsPageVisible(!document.hidden);
+    update();
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
+  }, []);
+
+  /* Pause while the preview frame is scrolled out of view */
+  useEffect(() => {
+    const element = previewRef.current;
+    if (!element) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => setIsInView(entry.isIntersecting));
+      },
+      { threshold: 0.25 }
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  /* Autoplay timer — keeps the remaining time so pause/resume stays
+     in sync with the progress bar instead of restarting the slide */
+  useEffect(() => {
+    if (isAutoplayPaused) return;
+
+    startedAtRef.current = Date.now();
+    const timer = window.setTimeout(() => {
+      goToPreview(activePreview + 1);
+    }, remainingRef.current);
+
+    return () => {
+      window.clearTimeout(timer);
+      if (startedAtRef.current !== null) {
+        remainingRef.current = Math.max(
+          0,
+          remainingRef.current - (Date.now() - startedAtRef.current)
+        );
+        startedAtRef.current = null;
+      }
+    };
+  }, [activePreview, isAutoplayPaused, goToPreview]);
+
+  const canHover = () =>
+    window.matchMedia('(hover: hover) and (pointer: fine)').matches;
 
   return (
     <>
@@ -239,44 +327,122 @@ export default function Hero() {
               </div>
 
               {/* ════════════════ RIGHT COLUMN ════════════════ */}
-              <div className="relative w-full max-w-sm sm:max-w-md lg:max-w-[420px] mx-auto animate-scaleIn" style={{ animationDelay: '0.3s', opacity: 0 }}>
+              <div
+                ref={previewRef}
+                className="group/preview relative w-full max-w-sm sm:max-w-md lg:max-w-[420px] mx-auto animate-scaleIn"
+                style={{ animationDelay: '0.3s', opacity: 0 }}
+                onMouseEnter={() => canHover() && setIsHoverPaused(true)}
+                onMouseLeave={() => setIsHoverPaused(false)}
+                onFocus={() => setIsFocusPaused(true)}
+                onBlur={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget)) setIsFocusPaused(false);
+                }}
+              >
 
                 {/* ── Doctor photo preview frame ── */}
                 <div className="hero-doctor-frame rounded-[30px] p-[1px]">
-                  <div className="relative h-[260px] sm:h-[320px] lg:h-[370px] overflow-hidden rounded-[29px] bg-slate-900">
-                    <img
-                      key={selectedPhoto.src}
-                      src={selectedPhoto.src}
-                      alt={selectedPhoto.alt}
-                      loading={activePreview === 0 ? 'eager' : 'lazy'}
-                      className={`w-full h-full object-cover hero-bg-zoom ${activePreview === 0 ? 'hero-doctor-photo' : 'object-center'}`}
-                    />
+                  <div
+                    className="relative h-[260px] sm:h-[320px] lg:h-[370px] overflow-hidden rounded-[29px] bg-slate-900"
+                    role="region"
+                    aria-roledescription="carousel"
+                    aria-label="پیش‌نمایش گالری تصاویر"
+                    onTouchStart={(e) => {
+                      touchStartXRef.current = e.touches[0]?.clientX ?? null;
+                    }}
+                    onTouchEnd={(e) => {
+                      const startX = touchStartXRef.current;
+                      touchStartXRef.current = null;
+                      if (startX === null) return;
+                      const dx = (e.changedTouches[0]?.clientX ?? startX) - startX;
+                      if (Math.abs(dx) < 40) return;
+                      goToPreview(dx < 0 ? activePreview + 1 : activePreview - 1);
+                    }}
+                  >
+                    {/* Stacked slides with crossfade + Ken Burns zoom */}
+                    {previewPhotos.map((photo, index) => (
+                      <img
+                        key={photo.src}
+                        src={photo.src}
+                        alt={index === activePreview ? photo.alt : ''}
+                        aria-hidden={index !== activePreview}
+                        loading={index === 0 ? 'eager' : 'lazy'}
+                        decoding="async"
+                        draggable={false}
+                        className={`hero-preview-slide ${index === activePreview ? 'is-active' : ''} ${index === 0 ? 'hero-doctor-photo' : 'object-center'}`}
+                      />
+                    ))}
                     <div className="absolute inset-0 bg-gradient-to-t from-[#02060f]/90 via-[#02060f]/15 to-transparent" />
                     <div className="absolute inset-0 bg-gradient-to-r from-[#02060f]/25 via-transparent to-transparent" />
 
-                    <div className="absolute top-4 right-4 left-4 flex items-center justify-between gap-3">
+                    <div className="absolute top-4 right-4 left-4 z-20 flex items-center justify-between gap-3">
                       <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-[#02060f]/55 px-3 py-2 text-[10px] font-bold text-white/85 backdrop-blur-lg sm:text-xs">
                         <Images className="h-3.5 w-3.5 text-cyan-300" />
                         پیش‌نمایش گالری
                       </span>
-                      <span className="rounded-full border border-white/10 bg-[#02060f]/50 px-3 py-2 text-[10px] font-bold tracking-widest text-white/75 backdrop-blur-lg" dir="ltr">
-                        0{activePreview + 1} / 04
+                      <span className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setIsManuallyPaused((paused) => !paused)}
+                          aria-label={isManuallyPaused ? 'پخش خودکار تصاویر' : 'توقف پخش خودکار تصاویر'}
+                          aria-pressed={isManuallyPaused}
+                          title={isManuallyPaused ? 'پخش خودکار' : 'توقف خودکار'}
+                          className="flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-[#02060f]/55 text-white/85 backdrop-blur-lg transition-all duration-300 hover:border-cyan-300/50 hover:text-cyan-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70"
+                        >
+                          {isManuallyPaused ? (
+                            <Play className="h-3.5 w-3.5 -scale-x-100" />
+                          ) : (
+                            <Pause className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                        <span className="rounded-full border border-white/10 bg-[#02060f]/50 px-3 py-2 text-[10px] font-bold tracking-widest text-white/75 backdrop-blur-lg" dir="ltr">
+                          {String(activePreview + 1).padStart(2, '0')} / {String(previewPhotos.length).padStart(2, '0')}
+                        </span>
                       </span>
                     </div>
 
-                    <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-5">
+                    {/* Prev / Next arrows (RTL: right = previous, left = next) */}
+                    <button
+                      type="button"
+                      onClick={() => goToPreview(activePreview - 1)}
+                      aria-label="تصویر قبلی"
+                      className="absolute right-3 top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white/15 bg-[#02060f]/45 text-white/90 backdrop-blur-lg transition-all duration-300 hover:scale-105 hover:border-cyan-300/50 hover:text-cyan-200 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70 lg:opacity-0 lg:group-hover/preview:opacity-100"
+                    >
+                      <ChevronRight className="h-5 w-5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => goToPreview(activePreview + 1)}
+                      aria-label="تصویر بعدی"
+                      className="absolute left-3 top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white/15 bg-[#02060f]/45 text-white/90 backdrop-blur-lg transition-all duration-300 hover:scale-105 hover:border-cyan-300/50 hover:text-cyan-200 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70 lg:opacity-0 lg:group-hover/preview:opacity-100"
+                    >
+                      <ChevronLeft className="h-5 w-5" />
+                    </button>
+
+                    <div className="absolute bottom-0 left-0 right-0 z-20 p-4 sm:p-5">
                       <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/15 bg-[#02060f]/70 px-4 py-3.5 backdrop-blur-xl sm:px-5 sm:py-4">
                         <div className="flex min-w-0 items-center gap-3">
                           <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500 to-teal-500 shadow-lg shadow-cyan-950/40">
                             <Activity className="h-5 w-5 text-white" />
                           </div>
-                          <div className="min-w-0">
+                          <div key={activePreview} className="hero-preview-caption min-w-0">
                             <p className="truncate text-sm font-black leading-tight text-white sm:text-base">{selectedPhoto.title}</p>
                             <p className="mt-1 truncate text-[10px] font-medium text-cyan-200/80 sm:text-[11px]">{selectedPhoto.caption}</p>
                           </div>
                         </div>
 
                       </div>
+                    </div>
+
+                    {/* Autoplay progress bar */}
+                    <div className="absolute bottom-0 inset-x-0 z-30 h-[3px] bg-white/10" aria-hidden="true">
+                      <div
+                        key={activePreview}
+                        className="hero-preview-progress h-full bg-gradient-to-l from-cyan-400 to-teal-400"
+                        style={{
+                          animationDuration: `${PREVIEW_INTERVAL}ms`,
+                          animationPlayState: isAutoplayPaused ? 'paused' : 'running',
+                        }}
+                      />
                     </div>
                   </div>
                 </div>
@@ -287,9 +453,10 @@ export default function Hero() {
                     <button
                       key={photo.title}
                       type="button"
-                      onClick={() => setActivePreview(index)}
+                      onClick={() => goToPreview(index)}
                       aria-label={`نمایش تصویر ${photo.title}`}
                       aria-pressed={activePreview === index}
+                      aria-current={activePreview === index}
                       className={`hero-preview-thumb group relative aspect-[1.6/1] overflow-hidden rounded-xl border text-right transition-all duration-300 ${
                         activePreview === index ? 'is-active border-cyan-300/90 ring-2 ring-cyan-400/30' : 'border-white/10 hover:border-white/35'
                       }`}
@@ -297,6 +464,16 @@ export default function Hero() {
                       <img src={photo.src} alt="" loading="lazy" className={`absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-110 ${index === 0 ? 'object-left' : 'object-center'}`} />
                       <span className="absolute inset-0 bg-gradient-to-t from-[#02060f]/90 via-[#02060f]/10 to-transparent" />
                       <span className="absolute bottom-1.5 right-1 left-1 truncate text-center text-[8px] font-bold text-white sm:bottom-2 sm:text-[10px]">{['دکتر', 'طب سوزنی', 'لیزر', 'مفهومی'][index]}</span>
+                      {activePreview === index && (
+                        <span
+                          className="hero-preview-progress absolute bottom-0 inset-x-0 block h-[3px] bg-gradient-to-l from-cyan-400 to-teal-400"
+                          style={{
+                            animationDuration: `${PREVIEW_INTERVAL}ms`,
+                            animationPlayState: isAutoplayPaused ? 'paused' : 'running',
+                          }}
+                          aria-hidden="true"
+                        />
+                      )}
                     </button>
                   ))}
                 </div>

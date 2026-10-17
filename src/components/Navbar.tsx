@@ -6,6 +6,7 @@ const navLinks = [
   { id: 'about', label: 'درباره پزشک' },
   { id: 'services', label: 'خدمات' },
   { id: 'conditions', label: 'زمینه‌های ارزیابی' },
+  { id: 'videos', label: 'ویدیوها' },
   { id: 'contact', label: 'تماس' },
 ];
 
