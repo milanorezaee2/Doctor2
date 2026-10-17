@@ -5,6 +5,7 @@ const quickLinks = [
   { label: 'درباره پزشک', id: 'about' },
   { label: 'خدمات', id: 'services' },
   { label: 'زمینه‌های ارزیابی', id: 'conditions' },
+  { label: 'ویدیوها', id: 'videos' },
   { label: 'تماس', id: 'contact' },
 ];
 

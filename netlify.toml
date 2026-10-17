@@ -1,0 +1,14 @@
+[build]
+  # Netlify serves the site from the domain root, so override the
+  # GitHub Pages base (/Doctor2/) with "/" for this deploy only.
+  command = "npm run build -- --base=/"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# SPA fallback: serve index.html for any route
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
